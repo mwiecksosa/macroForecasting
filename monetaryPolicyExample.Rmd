@@ -1,0 +1,417 @@
+---
+title: "Monetary Policy Example"
+author: "Michael Wieck-Sosa"
+date: "12/11/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**Load packages**
+```{r}
+#installation of the BMR package is a bit of a pain
+# 1. install.packages("devtools")
+# 2. library(devtools)
+# 3. #Sys.setenv("R_REMOTES_NO_ERRORS_FROM_WARNINGS" = "true")
+# 4. install_github("kthohr/BMR", INSTALL_opts="--no-multiarch")
+# May need to also install Rtools if on Windows https://cran.r-project.org/bin/windows/Rtools/
+# and for Mac users https://cran.r-project.org/bin/macosx/tools/
+library(BMR)
+
+# install.packages("fractal")
+library(fractal)
+
+library(reshape2)
+library(dplyr)
+library(zoo)
+```
+
+# Minnesota Prior Example
+```{r}
+# Get macroeconomic monthly data from January 1959 to July 2020
+
+# from https://fred.stlouisfed.org/series/UNRATE
+unrate <- read.csv("https://fred.stlouisfed.org/graph/fredgraph.csv?bgcolor=%23e1e9f0&chart_type=line&drp=0&fo=open%20sans&graph_bgcolor=%23ffffff&height=450&mode=fred&recession_bars=on&txtcolor=%23444444&ts=12&tts=12&width=748&nt=0&thu=0&trc=0&show_legend=yes&show_axis_titles=yes&show_tooltip=yes&id=UNRATE&scale=left&cosd=1959-01-01&coed=2020-07-01&line_color=%234572a7&link_values=false&line_style=solid&mark_type=none&mw=3&lw=2&ost=-99999&oet=99999&mma=0&fml=a&fq=Monthly&fam=avg&fgst=lin&fgsnd=2020-02-01&line_index=1&transformation=lin&vintage_date=2020-12-11&revision_date=2020-12-11&nd=1948-01-01")
+# no transformation
+
+# from https://fred.stlouisfed.org/series/PCEPILFE
+pcepilfe <- read.csv("https://fred.stlouisfed.org/graph/fredgraph.csv?bgcolor=%23e1e9f0&chart_type=line&drp=0&fo=open%20sans&graph_bgcolor=%23ffffff&height=450&mode=fred&recession_bars=on&txtcolor=%23444444&ts=12&tts=12&width=748&nt=0&thu=0&trc=0&show_legend=yes&show_axis_titles=yes&show_tooltip=yes&id=PCEPILFE&scale=left&cosd=1959-01-01&coed=2020-07-01&line_color=%234572a7&link_values=false&line_style=solid&mark_type=none&mw=3&lw=2&ost=-99999&oet=99999&mma=0&fml=a&fq=Monthly&fam=avg&fgst=lin&fgsnd=2020-02-01&line_index=1&transformation=lin&vintage_date=2020-12-11&revision_date=2020-12-11&nd=1959-01-01")
+# no transformation
+
+# from https://fred.stlouisfed.org/series/PCEPI
+pcepi <- read.csv("https://fred.stlouisfed.org/graph/fredgraph.csv?bgcolor=%23e1e9f0&chart_type=line&drp=0&fo=open%20sans&graph_bgcolor=%23ffffff&height=450&mode=fred&recession_bars=on&txtcolor=%23444444&ts=12&tts=12&width=748&nt=0&thu=0&trc=0&show_legend=yes&show_axis_titles=yes&show_tooltip=yes&id=PCEPI&scale=left&cosd=1959-01-01&coed=2020-07-01&line_color=%234572a7&link_values=false&line_style=solid&mark_type=none&mw=3&lw=2&ost=-99999&oet=99999&mma=0&fml=a&fq=Monthly&fam=avg&fgst=lin&fgsnd=2020-02-01&line_index=1&transformation=lin&vintage_date=2020-12-11&revision_date=2020-12-11&nd=1959-01-01")
+# no transformation
+
+# from https://fred.stlouisfed.org/series/GDPC1#0
+real_gdp <- read.csv("https://fred.stlouisfed.org/graph/fredgraph.csv?bgcolor=%23e1e9f0&chart_type=line&drp=0&fo=open%20sans&graph_bgcolor=%23ffffff&height=450&mode=fred&recession_bars=on&txtcolor=%23444444&ts=12&tts=12&width=748&nt=0&thu=0&trc=0&show_legend=yes&show_axis_titles=yes&show_tooltip=yes&id=GDPC1&scale=left&cosd=1959-01-01&coed=2020-07-01&line_color=%234572a7&link_values=false&line_style=solid&mark_type=none&mw=3&lw=2&ost=-99999&oet=99999&mma=0&fml=a&fq=Quarterly&fam=avg&fgst=lin&fgsnd=2020-02-01&line_index=1&transformation=lin&vintage_date=2020-12-11&revision_date=2020-12-11&nd=1947-01-01")
+real_gdp$DATE <- as.Date(real_gdp$DATE)
+# use a spline method to convert quarterly real_gdp to monthly real_gdp
+months <- lapply(X = real_gdp$DATE, FUN = seq.Date, by = "month", length.out = 3)
+months <- data.frame(DATE = do.call(what = c, months))
+monthly_data <- left_join(x = months, y = real_gdp, by = "DATE")
+monthly_data$GDPC1 <- na.spline(object = monthly_data$GDPC1)
+real_gdp <- monthly_data
+# log of GDP
+real_gdp$GDPC1 <- log(real_gdp$GDPC1)
+# get rid of last 2 rows from spline
+real_gdp <- real_gdp[-c(740,741),]
+
+# combine macroeconomic variables
+df <- data.frame(cbind(real_gdp,unrate$UNRATE,pcepilfe$PCEPILFE,pcepi$PCEPI))
+names(df) <- c("DATE","REAL_GDP","UNRATE","PCEPILFE","PCEPI")
+
+# from https://www.cbo.gov/data/budget-economic-data#6
+# the very bottom left of the page for the most up to date 
+# potential GDP forecasts by the Congressional Budget Office
+real_potential_gdp <- read.csv("C:/Users/mykul/OneDrive/Documents/stat429/proj/Quarterly_July20.csv")
+real_potential_gdp <- real_potential_gdp[,c("date","real_potential_gdp")]
+real_potential_gdp$date <- seq(as.Date("1949-01-01"), as.Date("2030/10/01"), by = "quarter")
+# use spline method to get monthly potential GDP
+months <- lapply(X = real_potential_gdp$date, FUN = seq.Date, by = "month", length.out = 3)
+months <- data.frame(date = do.call(what = c, months))
+monthly_data <- left_join(x = months, y = real_potential_gdp, by = "date")
+monthly_data$real_potential_gdp <- na.spline(object = monthly_data$real_potential_gdp)
+real_potential_gdp <- monthly_data
+# log of potential GDP
+real_potential_gdp$real_potential_gdp <- log(real_potential_gdp$real_potential_gdp)
+
+```
+
+```{r}
+# plot time-series 
+gtsplot(df[, 2:5], dates = df[, 1])
+
+```
+
+
+```{r}
+# n.taper is the number of sinusoidal tapers to develop eigenspectra for each block of the time series because 5 is the minimum value
+# n.block is the number of blocks to divide the time series, ideally should be divisible by n.tapers so to use all the data, so I chose 10 
+stationarity(as.matrix(df[,2:5]),n.taper = 5,n.block = 10)
+# reject Priestley-Subba Rao stationarity Test null hypothesis that time-series is stationary at alpha = 0.05 significance level
+
+```
+
+
+```{r}
+# create new R object of BVAR with Minnesota Prior
+myBvar <- new(bvarm)
+
+# build BVAR with Minnesota prior, with constant, and with four lags
+myBvar$build(data.matrix(df[,2:5]),TRUE,4)
+
+# Citations for choosing BVAR model setup follows 
+# the set-up of the Economics academic paper Canova (2007)
+# set priors as the same for each variable to get random-walk for 
+# the variables which are non-stationary (which I tested above)
+coefficientPrior <- c(0.9,0.9,0.9,0.9)
+
+myBvar$prior(coefficientPrior, # prior mean value
+               1,    # var type
+               1,    # decay type
+               0.2,  # hyperparameter 1
+               0.5,  # hyperparameter 2
+               10^5, # hyperparameter 3
+               1.0)  # hyperparameter 4
+
+# 10,000 draws for Gibbs sampler 
+myBvar$gibbs(10000)
+
+
+```
+
+```{r}
+# density functions for the parameter estimates
+plot(myBvar, var_names = colnames(df)[-1], save = FALSE)
+```
+
+
+```{r}
+# impulse response function
+IRF.Rcpp_bvars(myBvar,20,var_names=colnames(df)[-1],save=FALSE)
+```
+
+
+```{r}
+forecastEstimates <- forecast(myBvar,shocks=TRUE,var_names=colnames(df)[-1],back_data=10,save=FALSE)
+
+```
+
+
+```{r}
+# get forecast estimates into a dataframe
+df_forecasted <- data.frame(forecastEstimates$forecast_mean)
+names(df_forecasted) <- c("REAL_GDP","UNRATE","PCEPILFE","PCEPI")
+
+df_forecasted$DATE <- seq(as.Date("2020-08-01"),as.Date("2022-03-01"),by="month")
+df_forecasted <- df_forecasted %>% select("DATE", everything())
+
+
+```
+
+
+```{r}
+# add real potential gdp as a column to both series 
+# original series: January 1, 1959 to July 1, 2020
+df$real_potential_gdp <- real_potential_gdp[121:859,2]
+
+# forecast series: August 1, 2020 to March 1, 2022
+df_forecasted$real_potential_gdp <- real_potential_gdp[860:879,2]
+
+# combine both series 
+df_fullSeries <- rbind(df,df_forecasted)
+
+```
+
+
+```{r}
+# calculate year-by-year PCE inflation rate
+df_fullSeries$PCE_INFLATION_RATE <- (df_fullSeries$PCEPILFE - lag(df_fullSeries$PCEPILFE,12)) / lag(df_fullSeries$PCEPILFE,12)
+
+# remove first 12 rows
+df_fullSeries <- df_fullSeries[-c(1:12),]
+
+```
+
+```{r}
+# calculate percent deviation of real GDP from real potential GDP target
+df_fullSeries$percentDeviation_REALGDP <- (df_fullSeries$real_potential_gdp - df_fullSeries$REAL_GDP) / df_fullSeries$REAL_GDP
+0
+```
+
+
+```{r}
+# Taylor Rule
+# see https://www.brookings.edu/blog/ben-bernanke/2015/04/28/the-taylor-rule-a-benchmark-for-monetary-policy/
+# r = p + .5y + .5(p – 2) + 2
+# where
+# r = the federal funds rate
+# p = the rate of inflation
+# y = the percent deviation of real GDP from a target
+
+df_fullSeries$fedFundsRate <- df_fullSeries$PCE_INFLATION_RATE + 0.5*df_fullSeries$percentDeviation_REALGDP + 0.5*(df_fullSeries$PCE_INFLATION_RATE - 2) + 2
+
+tail(df_fullSeries[c("DATE","fedFundsRate")],20)
+
+```
+
+
+# Normal-Inverse Wishart Prior Example
+
+```{r}
+# Get macroeconomic monthly data from January 1959 to July 2020
+
+# from https://fred.stlouisfed.org/series/UNRATE
+unrate <- read.csv("https://fred.stlouisfed.org/graph/fredgraph.csv?bgcolor=%23e1e9f0&chart_type=line&drp=0&fo=open%20sans&graph_bgcolor=%23ffffff&height=450&mode=fred&recession_bars=on&txtcolor=%23444444&ts=12&tts=12&width=748&nt=0&thu=0&trc=0&show_legend=yes&show_axis_titles=yes&show_tooltip=yes&id=UNRATE&scale=left&cosd=1959-01-01&coed=2020-07-01&line_color=%234572a7&link_values=false&line_style=solid&mark_type=none&mw=3&lw=2&ost=-99999&oet=99999&mma=0&fml=a&fq=Monthly&fam=avg&fgst=lin&fgsnd=2020-02-01&line_index=1&transformation=lin&vintage_date=2020-12-11&revision_date=2020-12-11&nd=1948-01-01")
+# no transformation
+
+# from https://fred.stlouisfed.org/series/PCEPILFE
+pcepilfe <- read.csv("https://fred.stlouisfed.org/graph/fredgraph.csv?bgcolor=%23e1e9f0&chart_type=line&drp=0&fo=open%20sans&graph_bgcolor=%23ffffff&height=450&mode=fred&recession_bars=on&txtcolor=%23444444&ts=12&tts=12&width=748&nt=0&thu=0&trc=0&show_legend=yes&show_axis_titles=yes&show_tooltip=yes&id=PCEPILFE&scale=left&cosd=1959-01-01&coed=2020-07-01&line_color=%234572a7&link_values=false&line_style=solid&mark_type=none&mw=3&lw=2&ost=-99999&oet=99999&mma=0&fml=a&fq=Monthly&fam=avg&fgst=lin&fgsnd=2020-02-01&line_index=1&transformation=lin&vintage_date=2020-12-11&revision_date=2020-12-11&nd=1959-01-01")
+# no transformation
+
+# from https://fred.stlouisfed.org/series/PCEPI
+pcepi <- read.csv("https://fred.stlouisfed.org/graph/fredgraph.csv?bgcolor=%23e1e9f0&chart_type=line&drp=0&fo=open%20sans&graph_bgcolor=%23ffffff&height=450&mode=fred&recession_bars=on&txtcolor=%23444444&ts=12&tts=12&width=748&nt=0&thu=0&trc=0&show_legend=yes&show_axis_titles=yes&show_tooltip=yes&id=PCEPI&scale=left&cosd=1959-01-01&coed=2020-07-01&line_color=%234572a7&link_values=false&line_style=solid&mark_type=none&mw=3&lw=2&ost=-99999&oet=99999&mma=0&fml=a&fq=Monthly&fam=avg&fgst=lin&fgsnd=2020-02-01&line_index=1&transformation=lin&vintage_date=2020-12-11&revision_date=2020-12-11&nd=1959-01-01")
+# no transformation
+
+# from https://fred.stlouisfed.org/series/GDPC1#0
+real_gdp <- read.csv("https://fred.stlouisfed.org/graph/fredgraph.csv?bgcolor=%23e1e9f0&chart_type=line&drp=0&fo=open%20sans&graph_bgcolor=%23ffffff&height=450&mode=fred&recession_bars=on&txtcolor=%23444444&ts=12&tts=12&width=748&nt=0&thu=0&trc=0&show_legend=yes&show_axis_titles=yes&show_tooltip=yes&id=GDPC1&scale=left&cosd=1959-01-01&coed=2020-07-01&line_color=%234572a7&link_values=false&line_style=solid&mark_type=none&mw=3&lw=2&ost=-99999&oet=99999&mma=0&fml=a&fq=Quarterly&fam=avg&fgst=lin&fgsnd=2020-02-01&line_index=1&transformation=lin&vintage_date=2020-12-11&revision_date=2020-12-11&nd=1947-01-01")
+real_gdp$DATE <- as.Date(real_gdp$DATE)
+# use a spline method to convert quarterly real_gdp to monthly real_gdp
+months <- lapply(X = real_gdp$DATE, FUN = seq.Date, by = "month", length.out = 3)
+months <- data.frame(DATE = do.call(what = c, months))
+monthly_data <- left_join(x = months, y = real_gdp, by = "DATE")
+monthly_data$GDPC1 <- na.spline(object = monthly_data$GDPC1)
+real_gdp <- monthly_data
+# log of GDP
+real_gdp$GDPC1 <- log(real_gdp$GDPC1)
+# get rid of last 2 rows from spline
+real_gdp <- real_gdp[-c(740,741),]
+
+# combine macroeconomic variables
+df <- data.frame(cbind(real_gdp,unrate$UNRATE,pcepilfe$PCEPILFE,pcepi$PCEPI))
+names(df) <- c("DATE","REAL_GDP","UNRATE","PCEPILFE","PCEPI")
+
+# from https://www.cbo.gov/data/budget-economic-data#6
+# the very bottom left of the page for the most up to date 
+# potential GDP forecasts by the Congressional Budget Office
+real_potential_gdp <- read.csv("C:/Users/mykul/OneDrive/Documents/stat429/proj/Quarterly_July20.csv")
+real_potential_gdp <- real_potential_gdp[,c("date","real_potential_gdp")]
+real_potential_gdp$date <- seq(as.Date("1949-01-01"), as.Date("2030/10/01"), by = "quarter")
+# use spline method to get monthly potential GDP
+months <- lapply(X = real_potential_gdp$date, FUN = seq.Date, by = "month", length.out = 3)
+months <- data.frame(date = do.call(what = c, months))
+monthly_data <- left_join(x = months, y = real_potential_gdp, by = "date")
+monthly_data$real_potential_gdp <- na.spline(object = monthly_data$real_potential_gdp)
+real_potential_gdp <- monthly_data
+# log of potential GDP
+real_potential_gdp$real_potential_gdp <- log(real_potential_gdp$real_potential_gdp)
+
+```
+
+```{r}
+# plot time-series 
+gtsplot(df[, 2:5], dates = df[, 1])
+
+```
+
+
+```{r}
+# n.taper is the number of sinusoidal tapers to develop eigenspectra for each block of the time series because 5 is the minimum value
+# n.block is the number of blocks to divide the time series, ideally should be divisible by n.tapers so to use all the data, so I chose 10 
+stationarity(as.matrix(df[,2:5]),n.taper = 5,n.block = 10)
+# reject Priestley-Subba Rao stationarity Test null hypothesis that time-series is stationary at alpha = 0.05 significance level
+
+```
+
+
+```{r}
+# create new R object of BVAR with normal-inverse-Wishart Prior
+myBvar <- new(bvarinw)
+
+# build BVAR with normal-inverse Wishart prior, with constant and 4 lags
+coefficientPrior <- c(0.9,0.9,0.9,0.9)
+xBetaValue <- 4
+xSigmaValue <- 1
+gammaValue <- 4
+numLags <- 4
+addConstant <- TRUE
+
+myBvar$build(data.matrix(df[,2:5]),addConstant,numLags)
+
+# Citations for choosing BVAR model setup follows 
+# the set-up of the Economics academic paper Canova (2007)
+# set priors as the same for each variable to get random-walk for 
+# the variables which are non-stationary (which I tested above)
+myBvar$prior(coefficientPrior,xBetaValue,xSigmaValue,gammaValue)
+bvar_obj$prior(coef_prior,XiBeta,XiSigma,gamma)
+
+# 10,000 draws for Gibbs sampler 
+myBvar$gibbs(10000,5000)
+
+
+
+```
+
+```{r}
+# density functions for the parameter estimates
+plot(myBvar, var_names = colnames(df)[-1], save = FALSE)
+```
+
+
+```{r}
+# impulse response function
+IRF.Rcpp_bvars(myBvar,3,var_names=colnames(df)[-1],save=FALSE)
+```
+
+
+```{r}
+forecastEstimates <- forecast(myBvar,3,shocks=TRUE,var_names=colnames(df)[-1],back_data=10,save=FALSE)
+
+```
+
+
+```{r}
+# get forecast estimates into a dataframe
+df_forecasted <- data.frame(forecastEstimates$forecast_mean)
+names(df_forecasted) <- c("REAL_GDP","UNRATE","PCEPILFE","PCEPI")
+
+df_forecasted$DATE <- seq(as.Date("2020-08-01"),as.Date("2022-03-01"),by="month")
+df_forecasted <- df_forecasted %>% select("DATE", everything())
+
+
+```
+
+
+```{r}
+# add real potential gdp as a column to both series 
+# original series: January 1, 1959 to July 1, 2020
+df$real_potential_gdp <- real_potential_gdp[121:859,2]
+
+# forecast series: August 1, 2020 to March 1, 2022
+df_forecasted$real_potential_gdp <- real_potential_gdp[860:879,2]
+
+# combine both series 
+df_fullSeries <- rbind(df,df_forecasted)
+
+```
+
+
+```{r}
+# calculate year-by-year PCE inflation rate
+df_fullSeries$PCE_INFLATION_RATE <- (df_fullSeries$PCEPILFE - lag(df_fullSeries$PCEPILFE,12)) / lag(df_fullSeries$PCEPILFE,12)
+
+# remove first 12 rows
+df_fullSeries <- df_fullSeries[-c(1:12),]
+
+```
+
+```{r}
+# calculate percent deviation of real GDP from real potential GDP target
+df_fullSeries$percentDeviation_REALGDP <- (df_fullSeries$real_potential_gdp - df_fullSeries$REAL_GDP) / df_fullSeries$REAL_GDP
+```
+
+
+```{r}
+# Taylor Rule
+# see https://www.brookings.edu/blog/ben-bernanke/2015/04/28/the-taylor-rule-a-benchmark-for-monetary-policy/
+# r = p + .5y + .5(p – 2) + 2
+# where
+# r = the federal funds rate
+# p = the rate of inflation
+# y = the percent deviation of real GDP from a target
+
+df_fullSeries$fedFundsRate <- df_fullSeries$PCE_INFLATION_RATE + 0.5*df_fullSeries$percentDeviation_REALGDP + 0.5*(df_fullSeries$PCE_INFLATION_RATE - 2) + 2
+
+tail(df_fullSeries[c("DATE","fedFundsRate")],20)
+
+View(df_fullSeries)
+
+```
+
+
+
+**Citations:**
+1. https://www.kthohr.com/bmr/BMR.pdf 
+2. https://kevinkotze.github.io/ts-9-tut/
+3. https://www.r-econometrics.com/timeseries/bvar/
+4. https://rdrr.io/github/kthohr/BMR/man/bvarw.html
+5. https://rdrr.io/github/kthohr/BMR/man/bvarw.html
+6. https://research.stlouisfed.org/econ/mccracken/fred-databases/
+7. https://fred.stlouisfed.org/
+8. https://www.brookings.edu/blog/ben-bernanke/2015/04/28/the-taylor-rule-a-benchmark-for-monetary-policy/
+
+**Some comments:**
+1. The BMR package has changed since these guides were written and therefore none of them ran successfully so I had to tinker around with R for a while to use the new functions that the package supports with respect to R C++ objects. So I had to do something different to get the BMR package examples to work at all.
+2. I changed the parameter values for the model setup a bit since we are using different variables, but stayed in the same general direction.
+3. I used more different variables (GDP, Unemployment Rate, PCE Inflation) from FRED to get the most recent data, and I used a spline to interpolate the quarterly GDP into monthly GDP. Also, we get the potential GDP for the next 10 years from the congressional budget office. Lastly, we calculated the projected federal funds rate using the Taylor Rule.
+4. I followed the Macroeconomic theory papers for determining the BVAR models.
+- Canova, Fabio. "G-7 inflation forecasts: Random walk, Phillips curve or what else?." Macroeconomic Dynamics 11.1 (2007): 1-30 for their proposed setup of the BVAR model. 
+- Canova, Fabio, Methods for Applied Macroeconomic Research, Princeton, New Jersey: Princeton University Press, 2007.
+- Koop, Gary and Dimitris Korobilis, “Bayesian Multivariate Time Series Methods for Empirical Macroeconomics,” Mimeo, 2010.
+5. I added a section on the Normal-inverse-Wishart Prior which no example had implemented.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
